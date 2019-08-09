@@ -44,6 +44,7 @@ ThreadCondVar NfcAdaptation::mHalCloseCompletedEvent;
 
 UINT32 ScrProtocolTraceFlag = SCR_PROTO_TRACE_ALL; //0x017F00;
 UINT8 appl_trace_level = 0xff;
+UINT8 first_boot = 1;
 char bcm_nfc_location[120];
 char nci_hal_module[64];
 
@@ -600,12 +601,8 @@ void NfcAdaptation::DownloadFirmware ()
     HalOpen (HalDownloadFirmwareCallback, HalDownloadFirmwareDataCallback);
     mHalOpenCompletedEvent.wait ();
 
-    mHalCloseCompletedEvent.lock ();
     ALOGD ("%s: try close HAL", func);
     HalClose ();
-    mHalCloseCompletedEvent.wait ();
-
-    HalTerminate ();
     ALOGD ("%s: exit", func);
 }
 
@@ -636,6 +633,13 @@ void NfcAdaptation::HalDownloadFirmwareCallback (nfc_event_t event, nfc_status_t
             mHalCloseCompletedEvent.signal ();
             break;
         }
+    case HAL_NFC_POST_INIT_CPLT_EVT:
+        {
+            ALOGD ("%s: HAL_NFC_INIT_CPLT_EVT", func);
+            mHalOpenCompletedEvent.signal ();
+            break;
+        }
+
     }
 }
 
@@ -650,6 +654,43 @@ void NfcAdaptation::HalDownloadFirmwareCallback (nfc_event_t event, nfc_status_t
 *******************************************************************************/
 void NfcAdaptation::HalDownloadFirmwareDataCallback (uint16_t data_len, uint8_t* p_data)
 {
+    const char* func = "NfcAdaptation::HalDownloadFirmwareDataCallback";
+    char v1 = *(char *)p_data & 0xe0;
+    char v2 = *(char *)p_data & 0xf;
+    uint8_t v3 = *((char *)p_data + 1);
+    uint8_t v4 = *((char *)p_data + 3);
+    UINT8 NCI_CMD[8];
+    ALOGD ("%s: len=%u v1 = %u v2 = %u v3 = %u v4 = %u", "HalDownloadFirmwareDataCallback", data_len, v1,v2,v3,v4);
+
+    if (v1 == 64)
+    {
+       if (v2 || v3)
+       {
+          if (!v2 && v3 == 1)
+          {
+             if (!v4)
+             {
+                if (first_boot & 1)
+                {
+                   ALOGD ("Try HalCoreInitialized");
+                   NfcAdaptation::HalCoreInitialized(p_data);
+                   first_boot = 0;
+                }
+             }
+          }
+       }
+       else if (!v4)
+            {
+               ALOGD ("Try send init cmd to nfc");
+               // fill array with INIT_CMD
+               NCI_CMD[0] = 0x20;
+               NCI_CMD[1] = 0x01;
+               NCI_CMD[2] = 0x00;
+
+               NfcAdaptation::HalWrite(0x03,NCI_CMD);
+            }
+    }
+
 }
 
 
